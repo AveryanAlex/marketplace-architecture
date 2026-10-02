@@ -32,7 +32,7 @@ System_Boundary(marketplace, "Marketplace") {
   Container(notifications, "Notification Service", "Event consumer", "Отправляет уведомления о статусах заказа")
   ContainerDb(notifications_db, "Notification DB", "PostgreSQL", "Шаблоны, настройки и журнал доставок")
 
-  ContainerQueue(broker, "Event Broker", "RabbitMQ", "Доставка доменных событий; не источник бизнес-данных")
+  ContainerQueue(broker, "Event Broker", "RabbitMQ", "Доставка доменных событий")
 }
 
 Rel(buyer, web, "Покупает", "HTTPS")
