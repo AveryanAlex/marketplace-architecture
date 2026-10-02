@@ -1,0 +1,9 @@
+.git
+.gitignore
+docs
+tests
+README.md
+compose.yaml
+Makefile
+__pycache__
+*.pyc
