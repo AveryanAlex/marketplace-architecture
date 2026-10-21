@@ -4,3 +4,10 @@ __pycache__/
 .idea/
 .vscode/
 .DS_Store
+.venv/
+.cache/
+generated/
+.env
+.ruff_cache/
+.coverage
+htmlcov/

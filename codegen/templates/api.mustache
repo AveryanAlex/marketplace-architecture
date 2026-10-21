@@ -1,0 +1,53 @@
+# Generated from OpenAPI. Do not edit.
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+from uuid import UUID
+from datetime import datetime
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, Response
+from pydantic import Field
+from typing_extensions import Annotated
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.contract import ContractRoute
+from app.core.database import get_session
+from app.auth.security import Principal, authenticate
+from app import handlers
+{{#imports}}
+{{import}}
+{{/imports}}
+
+router = APIRouter(route_class=ContractRoute)
+{{#operations}}
+{{#operation}}
+
+@router.{{#lambda.lowercase}}{{httpMethod}}{{/lambda.lowercase}}(
+    "{{{path}}}",
+    status_code={{vendorExtensions.x-success-status}},
+    responses={
+        {{#responses}}
+        {{#isDefault}}"default"{{/isDefault}}{{^isDefault}}{{code}}{{/isDefault}}: {{=<% %>=}}{<%#dataType%>"model": <%dataType%>, <%/dataType%>"description": "<%message%>"}<%={{ }}=%>,
+        {{/responses}}
+    },
+    tags=[{{#tags}}"{{name}}"{{^-last}},{{/-last}}{{/tags}}],
+    summary="{{{summary}}}",
+    description="""{{{notes}}}""",
+    response_model_by_alias=True,
+)
+async def {{operationId}}(
+    request: Request,
+    {{#allParams}}
+    {{>endpoint_argument_definition}},
+    {{/allParams}}
+    session: AsyncSession = Depends(get_session),
+    {{#hasAuthMethods}}
+    actor: Principal = Depends(authenticate),
+    {{/hasAuthMethods}}
+) -> {{returnType}}{{^returnType}}None{{/returnType}}:
+    return await handlers.{{operationId}}(
+        request=request, session=session,
+        actor={{#hasAuthMethods}}actor{{/hasAuthMethods}}{{^hasAuthMethods}}None{{/hasAuthMethods}},
+        {{#allParams}}
+        {{>impl_argument}}={{>impl_argument}},
+        {{/allParams}}
+    )
+{{/operation}}
+{{/operations}}

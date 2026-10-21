@@ -1,50 +1,71 @@
-"""Minimal HTTP service used to verify service initialization.
+"""Application composition root. HTTP routes and DTOs are generated from OpenAPI."""
 
-There is deliberately no marketplace business logic here: this iteration only
-proves that a container can start and expose a health endpoint.
-"""
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from __future__ import annotations
+import yaml
+from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
+from marketplace_api.apis import auth_api, health_api, orders_api, products_api, promo_codes_api
+from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
+from starlette.exceptions import HTTPException
 
-import json
-import os
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-
-
-class HealthHandler(BaseHTTPRequestHandler):
-    """Serve the liveness endpoint and reject every other route."""
-
-    server_version = "marketplace-gateway/0.1"
-
-    def do_GET(self) -> None:  # noqa: N802 - name is defined by BaseHTTPRequestHandler
-        if self.path != "/health":
-            self.send_error(HTTPStatus.NOT_FOUND)
-            return
-
-        body = json.dumps({"status": "ok"}).encode("utf-8")
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format: str, *args: object) -> None:
-        # Keep the standard access log but send it through one predictable line.
-        print(f'{self.address_string()} - {format % args}', flush=True)
+from app.auth.service import bootstrap_admin
+from app.core.database import SessionFactory, engine
+from app.core.errors import (
+    APIError,
+    api_error_handler,
+    http_error_handler,
+    integrity_handler,
+    validation_handler,
+)
+from app.core.logging import RequestLoggingMiddleware, configure_logging
 
 
-def create_server(host: str = "0.0.0.0", port: int = 8080) -> ThreadingHTTPServer:
-    """Create a server separately so the handler can be tested without a process."""
+@asynccontextmanager
+async def lifespan(app):
+    async with SessionFactory() as session:
+        async with session.begin():
+            await session.execute(text("SELECT 1"))
+        await bootstrap_admin(session)
+    yield
+    await engine.dispose()
 
-    return ThreadingHTTPServer((host, port), HealthHandler)
+
+def create_app():
+    configure_logging()
+    app = FastAPI(title="Marketplace API", version="1.0.0", lifespan=lifespan)
+    app.add_middleware(RequestLoggingMiddleware)
+    app.add_exception_handler(APIError, api_error_handler)
+    app.add_exception_handler(RequestValidationError, validation_handler)
+    app.add_exception_handler(HTTPException, http_error_handler)
+    app.add_exception_handler(IntegrityError, integrity_handler)
+    for module in (health_api, auth_api, products_api, orders_api, promo_codes_api):
+        app.include_router(module.router)
+    # Serve the authored contract in Swagger UI, including its roles and exact errors.
+    contract = yaml.safe_load(
+        (Path(__file__).parent.parent / "openapi/marketplace.yaml").read_text()
+    )
+    app.openapi = lambda: contract
+    return app
 
 
-def main() -> None:
-    port = int(os.getenv("PORT", "8080"))
-    server = create_server(port=port)
-    print(f"marketplace-gateway listening on 0.0.0.0:{port}", flush=True)
-    server.serve_forever()
+app = create_app()
+
+
+def main():
+    import os
+
+    import uvicorn
+
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", "8080")),
+        access_log=False,
+        log_config=None,
+    )
 
 
 if __name__ == "__main__":

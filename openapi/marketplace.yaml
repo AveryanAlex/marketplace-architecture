@@ -1,0 +1,1302 @@
+openapi: 3.0.3
+info:
+  title: Marketplace API
+  version: 1.0.0
+  description: Contract-first modular monolith. All business endpoints require JWT.
+    Money uses exact Decimal arithmetic and JSON numbers with at most two fractional
+    digits.
+servers:
+- url: /
+security:
+- BearerAuth: []
+paths:
+  /health:
+    get:
+      operationId: health
+      tags:
+      - health
+      summary: Health
+      description: Liveness endpoint; application and DB readiness are checked during
+        startup
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+  /auth/register:
+    post:
+      operationId: register
+      tags:
+      - auth
+      summary: Register
+      description: Public
+      x-success-status: 201
+      responses:
+        '201':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+  /auth/login:
+    post:
+      operationId: login
+      tags:
+      - auth
+      summary: Login
+      description: Public
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+  /auth/refresh:
+    post:
+      operationId: refresh
+      tags:
+      - auth
+      summary: Refresh
+      description: 'Public. Refresh token rotation: the previous refresh token becomes
+        unusable'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshRequest'
+  /products:
+    post:
+      operationId: create_product
+      tags:
+      - products
+      summary: Create product
+      description: 'SELLER: own products; ADMIN: any seller'
+      x-success-status: 201
+      responses:
+        '201':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductCreate'
+    get:
+      operationId: list_products
+      tags:
+      - products
+      summary: List products
+      description: 'USER, SELLER, ADMIN: all products including ARCHIVED. Exact category
+        match, case-sensitive. Stable ordering by created_at and id. totalElements
+        is calculated after filtering'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductPage'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          default: 0
+      - name: size
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+      - name: status
+        in: query
+        schema:
+          $ref: '#/components/schemas/ProductStatus'
+      - name: category
+        in: query
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 100
+  /products/{id}:
+    get:
+      operationId: get_product
+      tags:
+      - products
+      summary: Get product
+      description: 'USER, SELLER, ADMIN: any product'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      operationId: update_product
+      tags:
+      - products
+      summary: Update product
+      description: 'SELLER: own products; ADMIN: any product'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProductResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProductUpdate'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      operationId: archive_product
+      tags:
+      - products
+      summary: Archive product
+      description: 'SELLER: own products; ADMIN: any product. Soft delete. Repeating
+        archive is successful. The row remains readable'
+      x-success-status: 204
+      responses:
+        '204':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /orders:
+    post:
+      operationId: create_order
+      tags:
+      - orders
+      summary: Create order
+      description: 'USER, ADMIN: create for themselves; SELLER forbidden. Checks in
+        order: creation cooldown, active order, catalogue, stock, reservation, pricing
+        and promo. Entire operation is atomic. Cooldown records only successful operations'
+      x-success-status: 201
+      responses:
+        '201':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/PromoError'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreate'
+  /orders/{id}:
+    get:
+      operationId: get_order
+      tags:
+      - orders
+      summary: Get order
+      description: 'USER: own order; ADMIN: any order; SELLER forbidden'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      operationId: update_order
+      tags:
+      - orders
+      summary: Update order
+      description: 'USER: own order; ADMIN: any order; SELLER forbidden. Only CREATED.
+        Owner check precedes state and cooldown checks. Update cooldown applies to
+        the acting user. Previous stock is released and new items reserved atomically'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderUpdate'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /orders/{id}/cancel:
+    post:
+      operationId: cancel_order
+      tags:
+      - orders
+      summary: Cancel order
+      description: 'USER: own order; ADMIN: any order; SELLER forbidden. Only CREATED
+        or PAYMENT_PENDING. Stock and promo usage are released once, in the same transaction'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /orders/{id}/status:
+    post:
+      operationId: change_order_status
+      tags:
+      - orders
+      summary: Change order status
+      description: 'USER: own order to PAYMENT_PENDING; ADMIN: any forward transition;
+        SELLER forbidden. CREATED -> PAYMENT_PENDING -> PAID -> SHIPPED -> COMPLETED.
+        No skipping or repeating. Cancellation uses the dedicated cancel endpoint'
+      x-success-status: 200
+      responses:
+        '200':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderStatusUpdate'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+  /promo-codes:
+    post:
+      operationId: create_promo_code
+      tags:
+      - promo_codes
+      summary: Create promo code
+      description: SELLER, ADMIN. Codes are globally unique. A duplicate code yields
+        PROMO_CODE_INVALID
+      x-success-status: 201
+      responses:
+        '201':
+          description: Success
+          headers:
+            X-Request-Id:
+              description: Server-generated request UUID
+              schema:
+                type: string
+                format: uuid
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PromoCodeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/PromoError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoCodeCreate'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 'Access JWT; role claim: USER, SELLER or ADMIN. Access: 20 minutes.
+        Refresh: 14 days.'
+  schemas:
+    ProductStatus:
+      type: string
+      enum:
+      - ACTIVE
+      - INACTIVE
+      - ARCHIVED
+    OrderStatus:
+      type: string
+      enum:
+      - CREATED
+      - PAYMENT_PENDING
+      - PAID
+      - SHIPPED
+      - COMPLETED
+      - CANCELED
+    Role:
+      type: string
+      enum:
+      - USER
+      - SELLER
+      - ADMIN
+    RegistrationRole:
+      type: string
+      enum:
+      - USER
+      - SELLER
+      default: USER
+    DiscountType:
+      type: string
+      enum:
+      - PERCENTAGE
+      - FIXED_AMOUNT
+    ProductCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        seller_id:
+          type: string
+          format: uuid
+          nullable: true
+      required:
+      - name
+      - price
+      - stock
+      - category
+      - status
+      description: SELLER creates products for themselves. ADMIN may supply seller_id
+        of a SELLER or ADMIN; defaults to current user.
+    ProductUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+      required:
+      - name
+      - price
+      - stock
+      - category
+      - status
+      description: Full replacement of editable fields. Omitted description becomes
+        null; seller ownership is immutable.
+    ProductResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: string
+          maxLength: 4000
+          nullable: true
+        price:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        stock:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+        category:
+          type: string
+          minLength: 1
+          maxLength: 100
+        status:
+          $ref: '#/components/schemas/ProductStatus'
+        seller_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+          x-timezone: true
+        updated_at:
+          type: string
+          format: date-time
+          x-timezone: true
+      required:
+      - id
+      - name
+      - price
+      - stock
+      - category
+      - status
+      - description
+      - seller_id
+      - created_at
+      - updated_at
+    ProductPage:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProductResponse'
+        totalElements:
+          type: integer
+          minimum: 0
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 1
+          maximum: 100
+      required:
+      - items
+      - totalElements
+      - page
+      - size
+    ErrorCode:
+      type: string
+      enum:
+      - PRODUCT_NOT_FOUND
+      - PRODUCT_INACTIVE
+      - ORDER_NOT_FOUND
+      - ORDER_LIMIT_EXCEEDED
+      - ORDER_HAS_ACTIVE
+      - INVALID_STATE_TRANSITION
+      - INSUFFICIENT_STOCK
+      - PROMO_CODE_INVALID
+      - PROMO_CODE_MIN_AMOUNT
+      - ORDER_OWNERSHIP_VIOLATION
+      - VALIDATION_ERROR
+      - TOKEN_EXPIRED
+      - TOKEN_INVALID
+      - REFRESH_TOKEN_INVALID
+      - ACCESS_DENIED
+      - USER_ALREADY_EXISTS
+      - INTERNAL_ERROR
+      - ROUTE_NOT_FOUND
+      - METHOD_NOT_ALLOWED
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        error_code:
+          $ref: '#/components/schemas/ErrorCode'
+        message:
+          type: string
+        details:
+          type: object
+          additionalProperties: true
+          nullable: true
+      required:
+      - error_code
+      - message
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+          pattern: ^[A-Za-z0-9_]+$
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+        role:
+          $ref: '#/components/schemas/RegistrationRole'
+      required:
+      - username
+      - password
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 100
+        password:
+          type: string
+          format: password
+          minLength: 8
+          maxLength: 128
+      required:
+      - username
+      - password
+    RefreshRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        refresh_token:
+          type: string
+          minLength: 1
+          maxLength: 4096
+      required:
+      - refresh_token
+    UserResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+        role:
+          $ref: '#/components/schemas/Role'
+        created_at:
+          type: string
+          format: date-time
+          x-timezone: true
+      required:
+      - id
+      - username
+      - role
+      - created_at
+    TokenResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        token_type:
+          type: string
+          enum:
+          - bearer
+        expires_in:
+          type: integer
+          minimum: 1
+      required:
+      - access_token
+      - refresh_token
+      - token_type
+      - expires_in
+    OrderItemInput:
+      type: object
+      additionalProperties: false
+      properties:
+        product_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 999
+      required:
+      - product_id
+      - quantity
+    OrderCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+          minItems: 1
+          maxItems: 50
+          x-unique-products: true
+        promo_code:
+          type: string
+          minLength: 4
+          maxLength: 20
+          pattern: ^[A-Z0-9_]{4,20}$
+          nullable: true
+      required:
+      - items
+      description: Duplicate product IDs are rejected with VALIDATION_ERROR. The caller
+        is the owner.
+    OrderUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemInput'
+          minItems: 1
+          maxItems: 50
+          x-unique-products: true
+      required:
+      - items
+      description: Full replacement of items. All prices use the current product price.
+        An existing promo is rechecked; an inapplicable promo is removed and its usage
+        released.
+    OrderItemResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        product_id:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+        price_at_order:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+      required:
+      - id
+      - product_id
+      - quantity
+      - price_at_order
+    OrderResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/OrderStatus'
+        promo_code_id:
+          type: string
+          format: uuid
+          nullable: true
+        total_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        discount_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItemResponse'
+        created_at:
+          type: string
+          format: date-time
+          x-timezone: true
+        updated_at:
+          type: string
+          format: date-time
+          x-timezone: true
+      required:
+      - id
+      - user_id
+      - status
+      - promo_code_id
+      - total_amount
+      - discount_amount
+      - items
+      - created_at
+      - updated_at
+    OrderStatusUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - PAYMENT_PENDING
+          - PAID
+          - SHIPPED
+          - COMPLETED
+      required:
+      - status
+    PromoCodeCreate:
+      type: object
+      additionalProperties: false
+      properties:
+        code:
+          type: string
+          minLength: 4
+          maxLength: 20
+          pattern: ^[A-Z0-9_]{4,20}$
+        discount_type:
+          $ref: '#/components/schemas/DiscountType'
+        discount_value:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+          x-percent-discount: true
+        min_order_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        max_uses:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        valid_from:
+          type: string
+          format: date-time
+          x-timezone: true
+        valid_until:
+          type: string
+          format: date-time
+          x-timezone: true
+          x-valid-until: true
+        active:
+          type: boolean
+          default: true
+      required:
+      - code
+      - discount_type
+      - discount_value
+      - min_order_amount
+      - max_uses
+      - valid_from
+      - valid_until
+      description: Timezone offset is required. valid_until must be later than valid_from.
+        PERCENTAGE value must be <= 100; >70 gives no discount. Currency amounts have
+        at most two decimal places.
+    PromoCodeResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          minLength: 4
+          maxLength: 20
+          pattern: ^[A-Z0-9_]{4,20}$
+        discount_type:
+          $ref: '#/components/schemas/DiscountType'
+        discount_value:
+          type: number
+          format: decimal
+          minimum: 0.01
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+          x-percent-discount: true
+        min_order_amount:
+          type: number
+          format: decimal
+          minimum: 0
+          maximum: 9999999999.99
+          multipleOf: 0.01
+          x-money: true
+        max_uses:
+          type: integer
+          minimum: 1
+          maximum: 2147483647
+        valid_from:
+          type: string
+          format: date-time
+          x-timezone: true
+        valid_until:
+          type: string
+          format: date-time
+          x-timezone: true
+          x-valid-until: true
+        active:
+          type: boolean
+          default: true
+        current_uses:
+          type: integer
+          minimum: 0
+      required:
+      - id
+      - code
+      - discount_type
+      - discount_value
+      - min_order_amount
+      - max_uses
+      - valid_from
+      - valid_until
+      - active
+      - current_uses
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum:
+          - ok
+      required:
+      - status
+  responses:
+    BadRequest:
+      description: VALIDATION_ERROR; malformed JSON, invalid fields, query or path
+        parameters.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: TOKEN_EXPIRED, TOKEN_INVALID, REFRESH_TOKEN_INVALID.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: ACCESS_DENIED, ORDER_OWNERSHIP_VIOLATION.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: PRODUCT_NOT_FOUND, ORDER_NOT_FOUND, ROUTE_NOT_FOUND.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    MethodNotAllowed:
+      description: METHOD_NOT_ALLOWED.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: PRODUCT_INACTIVE, ORDER_HAS_ACTIVE, INVALID_STATE_TRANSITION, INSUFFICIENT_STOCK,
+        USER_ALREADY_EXISTS.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    PromoError:
+      description: PROMO_CODE_INVALID, PROMO_CODE_MIN_AMOUNT.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    RateLimited:
+      description: ORDER_LIMIT_EXCEEDED. Retry-After contains remaining seconds.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: INTERNAL_ERROR.
+      headers:
+        X-Request-Id:
+          description: Server-generated request UUID
+          schema:
+            type: string
+            format: uuid
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

@@ -1,0 +1,91 @@
+# Generated from OpenAPI. Do not edit.
+from __future__ import annotations
+from decimal import Decimal
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, field_serializer
+from typing import Any, ClassVar, Dict, List, Optional, Union
+from typing_extensions import Annotated
+{{#vendorExtensions.x-py-datetime-imports}}{{#-first}}from datetime import{{/-first}} {{{.}}}{{^-last}},{{/-last}}{{/vendorExtensions.x-py-datetime-imports}}
+{{#vendorExtensions.x-py-pydantic-imports}}{{#-first}}from pydantic import{{/-first}} {{{.}}}{{^-last}},{{/-last}}{{/vendorExtensions.x-py-pydantic-imports}}
+{{#vendorExtensions.x-py-other-imports}}
+{{{.}}}
+{{/vendorExtensions.x-py-other-imports}}
+{{#vendorExtensions.x-py-model-imports}}
+{{{.}}}
+{{/vendorExtensions.x-py-model-imports}}
+
+class {{classname}}(BaseModel):
+    """{{{description}}}"""
+    model_config = ConfigDict(extra='forbid', from_attributes=True, validate_assignment=True)
+{{#vars}}
+    {{name}}: {{#vendorExtensions.x-money}}Annotated[Decimal, Field(ge=Decimal("{{minimum}}"), le=Decimal("{{maximum}}"), multiple_of=Decimal("{{multipleOf}}"), allow_inf_nan=False)]{{/vendorExtensions.x-money}}{{#vendorExtensions.x-timezone}}AwareDatetime{{/vendorExtensions.x-timezone}}{{^vendorExtensions.x-money}}{{^vendorExtensions.x-timezone}}{{{vendorExtensions.x-py-typing}}}{{/vendorExtensions.x-timezone}}{{/vendorExtensions.x-money}}
+{{/vars}}
+
+    @field_serializer('*', when_used='json')
+    def serialize_decimal(self, value):
+        return float(value) if isinstance(value, Decimal) else value
+
+    @field_validator({{#vars}}'{{name}}'{{^-last}}, {{/-last}}{{/vars}}, mode='before')
+    @classmethod
+    def reject_non_nullable_nulls(cls, value, info):
+        non_nullable = { {{#vars}}{{^isNullable}}'{{name}}', {{/isNullable}}{{/vars}} }
+        if value is None and info.field_name in non_nullable:
+            raise ValueError('Field cannot be null')
+        return value
+{{#vars}}
+{{#isEnum}}
+
+    @field_validator('{{name}}')
+    @classmethod
+    def validate_{{name}}_enum(cls, value):
+        if value is not None and value not in ({{#allowableValues}}{{#enumVars}}{{{value}}},{{/enumVars}}{{/allowableValues}}):
+            raise ValueError('Value is not a permitted enum member')
+        return value
+{{/isEnum}}
+{{#vendorExtensions.x-money}}
+
+    @field_validator('{{name}}', mode='before')
+    @classmethod
+    def validate_{{name}}_number(cls, value):
+        if isinstance(value, bool) or not isinstance(value, (Decimal, int, float)):
+            raise ValueError('Expected a JSON number')
+        return Decimal(str(value))
+{{/vendorExtensions.x-money}}
+{{#vendorExtensions.x-valid-until}}
+
+    @field_validator('{{name}}')
+    @classmethod
+    def validate_interval(cls, value, info):
+        if info.data.get('valid_from') and value <= info.data['valid_from']:
+            raise ValueError('valid_until must be later than valid_from')
+        return value
+{{/vendorExtensions.x-valid-until}}
+{{#vendorExtensions.x-percent-discount}}
+
+    @field_validator('{{name}}')
+    @classmethod
+    def validate_percentage(cls, value, info):
+        if info.data.get('discount_type') == 'PERCENTAGE' and value > 100:
+            raise ValueError('Percentage must not exceed 100')
+        return value
+{{/vendorExtensions.x-percent-discount}}
+{{#vendorExtensions.x-unique-products}}
+
+    @field_validator('{{name}}')
+    @classmethod
+    def validate_unique_products(cls, value):
+        ids = [item.product_id for item in value]
+        if len(set(ids)) != len(ids):
+            raise ValueError('Duplicate product_id in items')
+        return value
+{{/vendorExtensions.x-unique-products}}
+{{#vendorExtensions.x-regex}}
+
+    @field_validator('{{name}}')
+    @classmethod
+    def validate_{{name}}_pattern(cls, value):
+        import re
+        if value is not None and not re.fullmatch(r"{{{vendorExtensions.x-regex}}}", value):
+            raise ValueError('Value does not match the required pattern')
+        return value
+{{/vendorExtensions.x-regex}}
+{{/vars}}

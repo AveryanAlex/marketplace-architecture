@@ -1,65 +1,20 @@
 @startuml
-!includeurl https://raw.githubusercontent.com/plantuml-stdlib/C4-PlantUML/master/C4_Container.puml
+left to right direction
+skinparam shadowing false
+skinparam rectangleRoundCorner 12
+skinparam defaultFontName SansSerif
+title Marketplace — модульный монолит
 
-LAYOUT_LEFT_RIGHT()
-title C4 — Marketplace — Container diagram
+actor "USER / SELLER / ADMIN" as client
+rectangle "Marketplace API\nPython 3.13 / FastAPI / Uvicorn\n\nauth · products · orders · promo_codes" as api #DDEEFF
+database "PostgreSQL 17\nusers · refresh_tokens · products\norders · order_items · promo_codes\nuser_operations" as db #DFF5E4
+rectangle "Alembic\nОдноразовый запуск миграций" as migrations #FFF2D9
+artifact "OpenAPI 3.0.3\nКонтракт API" as contract
+rectangle "OpenAPI Generator\nМаршруты + Pydantic DTO\nПри сборке Docker-образа" as codegen #EEE5FF
 
-Person(buyer, "Покупатель", "Смотрит персональную ленту и оформляет заказы")
-Person(seller, "Продавец", "Управляет своими товарами")
-
-System_Ext(payment_provider, "Платёжный провайдер", "Эквайринг / платёжная система")
-System_Ext(message_provider, "Провайдер сообщений", "E-mail, SMS или push")
-
-System_Boundary(marketplace, "Marketplace") {
-  Container(web, "Web application", "SPA", "Интерфейс покупателя и продавца")
-  Container(gateway, "API Gateway", "Python HTTP service", "Единая точка входа; маршрутизация и проверка токена")
-
-  Container(identity, "Identity Service", "REST service", "Аккаунты, вход и роли покупателя/продавца")
-  ContainerDb(identity_db, "Identity DB", "PostgreSQL", "Аккаунты, роли, credentials")
-
-  Container(catalog, "Catalog Service", "REST service", "Карточки, цены, категории и остатки продавца")
-  ContainerDb(catalog_db, "Catalog DB", "PostgreSQL", "Товары, цены, категории, остатки")
-
-  Container(feed, "Feed Service", "REST + event consumer", "Персональная выдача: интерес к категориям + популярность")
-  ContainerDb(feed_db, "Feed DB", "PostgreSQL", "Профили интересов и read model ленты")
-
-  Container(orders, "Order Service", "REST + event producer", "Корзина, оформление и жизненный цикл заказа")
-  ContainerDb(orders_db, "Order DB", "PostgreSQL", "Заказы, позиции и снимки цен")
-
-  Container(payments, "Payment Service", "REST + event producer", "Сумма к оплате, попытки платежей и учёт операций")
-  ContainerDb(payments_db, "Payment DB", "PostgreSQL", "Платёжные операции и проводки")
-
-  Container(notifications, "Notification Service", "Event consumer", "Отправляет уведомления о статусах заказа")
-  ContainerDb(notifications_db, "Notification DB", "PostgreSQL", "Шаблоны, настройки и журнал доставок")
-
-  ContainerQueue(broker, "Event Broker", "RabbitMQ", "Доставка доменных событий")
-}
-
-Rel(buyer, web, "Покупает", "HTTPS")
-Rel(seller, web, "Управляет каталогом", "HTTPS")
-Rel(web, gateway, "Вызывает API", "HTTPS/JSON")
-
-Rel(gateway, identity, "Регистрация, вход, профиль", "sync REST")
-Rel(gateway, catalog, "Чтение и управление товарами", "sync REST")
-Rel(gateway, feed, "Получает ленту, сообщает просмотры", "sync REST")
-Rel(gateway, orders, "Оформляет и читает заказы", "sync REST")
-
-Rel(orders, catalog, "Проверяет/резервирует остатки", "sync REST")
-Rel(orders, payments, "Создаёт платёж/возврат", "sync REST, idempotency key")
-Rel(payments, payment_provider, "Проводит платёж", "HTTPS")
-Rel(notifications, message_provider, "Отправляет сообщение", "HTTPS")
-
-Rel(identity, identity_db, "Читает/пишет", "SQL")
-Rel(catalog, catalog_db, "Читает/пишет", "SQL")
-Rel(feed, feed_db, "Читает/пишет", "SQL")
-Rel(orders, orders_db, "Читает/пишет", "SQL")
-Rel(payments, payments_db, "Читает/пишет", "SQL")
-Rel(notifications, notifications_db, "Читает/пишет", "SQL")
-
-Rel(catalog, broker, "ProductChanged", "async event")
-Rel(orders, broker, "OrderStatusChanged, OrderCompleted", "async event")
-Rel(broker, feed, "ProductChanged, OrderCompleted", "async event")
-Rel(broker, notifications, "OrderStatusChanged", "async event")
-
-SHOW_LEGEND(true)
+client --> api : HTTP / JSON + Bearer JWT
+api --> db : asyncpg / SQLAlchemy\nОбщие ACID-транзакции
+migrations --> db : Версионирование схемы
+contract --> codegen
+codegen --> api : Generated routers + DTO
 @enduml

@@ -1,9 +1,10 @@
 .git
-.gitignore
-docs
-tests
-README.md
-compose.yaml
-Makefile
+.venv
+.cache
+generated
 __pycache__
 *.pyc
+.pytest_cache
+.ruff_cache
+.env
+docs

@@ -1,39 +1,20 @@
-from __future__ import annotations
-
-import json
-import threading
-import unittest
-import urllib.error
-import urllib.request
-
-from app.main import create_server
+from uuid import UUID
 
 
-class HealthEndpointTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls) -> None:
-        cls.server = create_server(host="127.0.0.1", port=0)
-        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
-        cls.thread.start()
-        cls.base_url = f"http://127.0.0.1:{cls.server.server_port}"
-
-    @classmethod
-    def tearDownClass(cls) -> None:
-        cls.server.shutdown()
-        cls.server.server_close()
-        cls.thread.join()
-
-    def test_health_returns_200_and_json(self) -> None:
-        with urllib.request.urlopen(f"{self.base_url}/health") as response:
-            self.assertEqual(response.status, 200)
-            self.assertEqual(json.load(response), {"status": "ok"})
-
-    def test_unknown_route_returns_404(self) -> None:
-        with self.assertRaises(urllib.error.HTTPError) as error:
-            urllib.request.urlopen(f"{self.base_url}/orders")
-        self.assertEqual(error.exception.code, 404)
-        error.exception.close()
+async def test_health_and_request_id(client):
+    response = await client.get("/health")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+    UUID(response.headers["X-Request-Id"])
+    again = await client.get("/health", headers={"X-Request-Id": "not-trusted"})
+    assert again.headers["X-Request-Id"] != response.headers["X-Request-Id"]
+    UUID(again.headers["X-Request-Id"])
 
 
-if __name__ == "__main__":
-    unittest.main()
+async def test_unknown_route_and_method_have_contract_errors(client):
+    response = await client.get("/missing")
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "ROUTE_NOT_FOUND"
+    response = await client.post("/health")
+    assert response.status_code == 405
+    assert response.json()["error_code"] == "METHOD_NOT_ALLOWED"

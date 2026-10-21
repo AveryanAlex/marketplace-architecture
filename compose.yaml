@@ -1,9 +1,71 @@
 services:
-  api-gateway:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: marketplace
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-marketplace}
+    ports:
+      - "127.0.0.1:${DB_PORT:-15432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  migrate:
     build:
       context: .
-    ports:
-      - "${HOST_PORT:-8080}:8080"
+      target: production
+    command: ["alembic", "upgrade", "head"]
     environment:
-      PORT: "8080"
+      DATABASE_URL: postgresql+asyncpg://marketplace:${POSTGRES_PASSWORD:-marketplace}@db:5432/marketplace
+    depends_on:
+      db:
+        condition: service_healthy
+  api:
+    build:
+      context: .
+      target: production
+    ports:
+      - "127.0.0.1:${HOST_PORT:-8080}:8080"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://marketplace:${POSTGRES_PASSWORD:-marketplace}@db:5432/marketplace
+      JWT_SECRET: ${JWT_SECRET:-local-development-secret-change-before-deploy-64-chars-long}
+      ORDER_COOLDOWN_MINUTES: ${ORDER_COOLDOWN_MINUTES:-1}
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-Admin-password-123}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
+  test-db:
+    image: postgres:17-alpine
+    profiles: ["test"]
+    environment:
+      POSTGRES_DB: marketplace_test
+      POSTGRES_USER: marketplace
+      POSTGRES_PASSWORD: marketplace
+    ports:
+      - "127.0.0.1:${TEST_DB_PORT:-15433}:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  test:
+    build:
+      context: .
+      target: test
+    profiles: ["test"]
+    environment:
+      DATABASE_URL: postgresql+asyncpg://marketplace:marketplace@test-db:5432/marketplace_test
+      ORDER_COOLDOWN_MINUTES: "0"
+    depends_on:
+      test-db:
+        condition: service_healthy
+volumes:
+  postgres-data:

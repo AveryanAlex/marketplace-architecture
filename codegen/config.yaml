@@ -1,0 +1,4 @@
+packageName: marketplace_api
+sourceFolder: src
+enumUnknownDefaultCase: false
+hideGenerationTimestamp: true

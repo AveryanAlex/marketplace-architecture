@@ -1,0 +1,26 @@
+name: Marketplace checks
+on:
+  push:
+  pull_request:
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, generate, migrate, lint and test on PostgreSQL
+        run: >-
+          docker compose --profile test run --build --rm test sh -c
+          'alembic upgrade head && ruff check app tests scripts migrations &&
+          ruff format --check app tests scripts migrations && pytest -q'
+      - name: Start application
+        run: docker compose up --build -d --wait db migrate api
+      - name: Live HTTP and SQL demonstration
+        run: python3 scripts/e2e.py
+      - name: Logs on failure
+        if: failure()
+        run: docker compose --profile test logs --no-color
+      - name: Stop containers
+        if: always()
+        run: docker compose --profile test down
