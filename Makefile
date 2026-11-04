@@ -1,21 +1,20 @@
-.PHONY: test up down check diagram
+PYTHON ?= .venv/bin/python
 
+.PHONY: install proto test integration lint up down check
+install:
+	uv venv --python 3.13 .venv
+	uv pip sync --python $(PYTHON) requirements-dev.txt
+proto:
+	$(PYTHON) scripts/generate_proto.py
 test:
-	python3 -m unittest discover -v
-
+	$(PYTHON) -m pytest -v -m 'not integration'
+integration:
+	docker compose --profile test run --build --rm tests
+lint:
+	.venv/bin/ruff check .
 up:
-	docker compose up --build -d
-
+	docker compose up --build -d --wait
 down:
 	docker compose down
-
 check:
-	curl --fail --silent --show-error http://localhost:8080/health
-
-diagram:
-	docker run --rm --user 0:0 \
-		-v "$(CURDIR):/work" plantuml/plantuml \
-		-tsvg -o /work/docs /work/docs/container.puml
-	docker run --rm --user 0:0 \
-		-v "$(CURDIR):/work" plantuml/plantuml \
-		-tpng -o /work/docs /work/docs/container.puml
+	curl --fail --silent --show-error http://localhost:$${HOST_PORT:-8080}/ready

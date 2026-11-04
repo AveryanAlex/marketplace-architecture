@@ -1,0 +1,16 @@
+name: Booking system checks
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: make install
+      - run: make lint test
+      - run: docker compose --parallel 1 up --build -d --wait
+      - run: docker compose --profile test run --build --rm tests
+      - if: failure()
+        run: docker compose logs --no-color --tail=100
+      - if: always()
+        run: docker compose down

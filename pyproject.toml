@@ -1,0 +1,10 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires running PostgreSQL and Redis"]
+
+[tool.ruff]
+line-length = 100
+exclude = ["app/generated"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

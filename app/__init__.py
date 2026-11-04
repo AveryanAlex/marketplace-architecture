@@ -1,1 +1,1 @@
-"""Marketplace API Gateway skeleton."""
+"""Distributed flight booking services."""
