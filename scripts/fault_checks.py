@@ -1,110 +1,150 @@
-"""Exercise real Sentinel failover and circuit recovery on the local Compose stack."""
+"""Destructive only to this Compose project; every stopped service is restored."""
 
-import argparse
 import json
 import subprocess
 import time
-from pathlib import Path
+import urllib.error
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
 
-import httpx
-
-ROOT = Path(__file__).resolve().parents[1]
+from demo import ANALYTICS_URL, MOVIE_URL, query_ch, request
 
 
 def compose(*args):
-    return subprocess.check_output(["docker", "compose", *args], cwd=ROOT, text=True).strip()
+    subprocess.run(["docker", "compose", *args], check=True)
 
 
-def redis(service, *args, port=6379):
-    return compose("exec", "-T", service, "redis-cli", "--raw", "-p", str(port), *args)
-
-
-def wait_until(check, seconds, description):
-    deadline = time.monotonic() + seconds
+def wait_healthy(service, timeout=180):
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
-        try:
-            if check():
-                return
-        except (httpx.HTTPError, subprocess.CalledProcessError):
-            pass
+        output = subprocess.check_output(
+            ["docker", "compose", "ps", "--format", "json", service], text=True
+        )
+        rows = [json.loads(line) for line in output.splitlines() if line]
+        if rows and rows[0].get("Health") == "healthy":
+            return
+        time.sleep(3)
+    raise AssertionError(f"{service} did not become healthy")
+
+
+def publish(user):
+    event_id = str(uuid4())
+    response = request(
+        MOVIE_URL + "/events",
+        {
+            "event_id": event_id,
+            "user_id": user,
+            "movie_id": "fault-check",
+            "event_type": "VIEW_STARTED",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "device_type": "DESKTOP",
+            "session_id": str(uuid4()),
+            "progress_seconds": 0,
+        },
+    )
+    assert response["event_id"] == event_id
+    return event_id
+
+
+def wait_ingested(event_id):
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        rows = query_ch(f"SELECT count() AS n FROM cinema.events WHERE event_id='{event_id}'")
+        if int(rows[0]["n"]) == 1:
+            return
         time.sleep(1)
-    raise AssertionError(f"Timed out waiting for {description}")
+    raise AssertionError("Event was not ingested after recovery")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--base-url", default="http://localhost:8080")
-    args = parser.parse_args()
-    stopped = set()
-    with httpx.Client(base_url=args.base_url, timeout=15) as api:
-        assert api.get("/flights/11111111-1111-4111-8111-111111111111").status_code == 200
-        current = next(
-            service
-            for service in ("redis-master", "redis-replica")
-            if redis(service, "ROLE").splitlines()[0] == "master"
-        )
-        other = "redis-replica" if current == "redis-master" else "redis-master"
+    user = f"fault:{uuid4()}"
+    try:
+        compose("stop", "kafka-1")
+        event_id = publish(user)
+        wait_ingested(event_id)
+        print("PASS: publication and ingestion continue with one broker/controller down")
+    finally:
+        compose("start", "kafka-1")
+        wait_healthy("kafka-1")
+    try:
+        compose("stop", "clickhouse")
+        event_id = publish(user)
+        print("Kafka acknowledged while ClickHouse is stopped:", event_id)
+    finally:
+        compose("start", "clickhouse")
+        wait_healthy("clickhouse")
+    wait_ingested(event_id)
+    print("PASS: Kafka retains events and ClickHouse catches up after restart")
+    date = (datetime.now(UTC) - timedelta(days=1)).date()
+    request(f"{ANALYTICS_URL}/aggregations/{date}", {})
+    try:
+        compose("stop", "s3")
         try:
-            print(f"Stopping Redis master: {current}", flush=True)
-            compose("stop", "-t", "2", current)
-            stopped.add(current)
-            assert api.get("/flights/11111111-1111-4111-8111-111111111111").status_code == 200
-            wait_until(
-                lambda: redis(other, "ROLE").splitlines()[0] == "master", 45, "Sentinel promotion"
-            )
-            wait_until(
-                lambda: api.get("/flights/11111111-1111-4111-8111-111111111111").status_code == 200,
-                10,
-                "API after failover",
-            )
-            # Prove that the application's Sentinel-aware client writes to the promoted master.
-            result = compose(
+            request(f"{ANALYTICS_URL}/exports/{date}", {})
+            raise AssertionError("Unavailable S3 should return 503")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 503
+        output = subprocess.check_output(
+            [
+                "docker",
+                "compose",
                 "exec",
                 "-T",
-                "flight-service",
-                "python",
-                "-c",
-                "from app.flight.cache import FlightCache; "
-                "c=FlightCache.from_env().client; "
-                "c.set('failover:probe', 'ok', ex=300); print(c.get('failover:probe'))",
-            )
-            assert "ok" in result
-            assert redis(other, "GET", "failover:probe") == "ok"
-            print(f"Sentinel promoted {other}; API and Sentinel client work", flush=True)
-            compose("start", current)
-            stopped.remove(current)
-
-            config = json.loads(compose("config", "--format", "json"))
-            env = config["services"]["booking-service"]["environment"]
-            threshold = int(env["CB_FAILURE_THRESHOLD"])
-            reset = float(env["CB_RESET_TIMEOUT_SECONDS"])
-            print("Stopping Flight Service", flush=True)
-            compose("stop", "-t", "2", "flight-service")
-            stopped.add("flight-service")
-            for _ in range(threshold):
-                response = api.get("/flights/11111111-1111-4111-8111-111111111111")
-                assert response.status_code in (503, 504), response.text
-            start = time.monotonic()
-            response = api.get("/flights/11111111-1111-4111-8111-111111111111")
-            elapsed = time.monotonic() - start
-            assert response.status_code == 503 and "OPEN" in response.json()["detail"]
-            assert elapsed < 1, elapsed
-            print(f"Circuit OPEN rejects immediately ({elapsed:.3f}s)", flush=True)
-            compose("start", "flight-service")
-            stopped.remove("flight-service")
-            wait_until(
-                lambda: api.get("/flights/11111111-1111-4111-8111-111111111111").status_code == 200,
-                reset + 30,
-                "HALF_OPEN -> CLOSED",
-            )
-            logs = compose("logs", "--no-color", "--tail=300", "booking-service")
-            assert "CLOSED -> OPEN" in logs
-            assert "OPEN -> HALF_OPEN" in logs
-            assert "HALF_OPEN -> CLOSED" in logs
-            print("Circuit recovered: OPEN -> HALF_OPEN -> CLOSED", flush=True)
-        finally:
-            for service in stopped:
-                compose("start", service)
+                "postgres",
+                "psql",
+                "-U",
+                "cinema",
+                "-d",
+                "cinema",
+                "-Atc",
+                f"SELECT exported_at IS NULL FROM export_jobs WHERE metric_date='{date}'",
+            ],
+            text=True,
+        )
+        assert output.strip() == "t"
+    finally:
+        compose("start", "s3")
+        wait_healthy("s3")
+    # Do not manually trigger export: prove the scheduler retries the persisted job.
+    deadline = time.monotonic() + 240
+    while time.monotonic() < deadline:
+        output = subprocess.check_output(
+            [
+                "docker",
+                "compose",
+                "exec",
+                "-T",
+                "postgres",
+                "psql",
+                "-U",
+                "cinema",
+                "-d",
+                "cinema",
+                "-Atc",
+                "SELECT exported_at IS NOT NULL AND last_error IS NULL FROM export_jobs "
+                f"WHERE metric_date='{date}'",
+            ],
+            text=True,
+        )
+        if output.strip() == "t":
+            break
+        time.sleep(5)
+    else:
+        raise AssertionError("Scheduler did not retry the failed export")
+    print("PASS: S3 outage queues export durably; scheduler completes it after recovery")
+    try:
+        compose("stop", "postgres")
+        try:
+            request(f"{ANALYTICS_URL}/aggregations/{date}", {})
+            raise AssertionError("Unavailable PostgreSQL should return 503")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 503
+    finally:
+        compose("start", "postgres")
+        wait_healthy("postgres")
+    result = request(f"{ANALYTICS_URL}/aggregations/{date}", {})
+    assert result["date"] == str(date)
+    print("PASS: aggregation resumes after PostgreSQL restart")
 
 
 if __name__ == "__main__":

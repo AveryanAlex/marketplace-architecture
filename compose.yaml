@@ -1,156 +1,221 @@
-name: flight-booking
-
-x-app-environment: &grpc-environment
-  GRPC_API_KEY: ${GRPC_API_KEY:-local-development-key-change-me}
-
-x-postgres: &postgres
-  image: postgres:17-alpine
+name: cinema-analytics
+x-app: &app
+  image: cinema-analytics-app:local
+  build:
+    context: .
+    target: runtime
   restart: unless-stopped
+  environment: &app-env
+    KAFKA_BOOTSTRAP: kafka-1:9092,kafka-2:9092,kafka-3:9092
+    SCHEMA_REGISTRY_URL: http://schema-registry:8081
+    POSTGRES_DSN: postgresql://cinema:cinema-local@postgres:5432/cinema
+    CLICKHOUSE_URL: http://clickhouse:8123
+    CLICKHOUSE_USER: cinema
+    CLICKHOUSE_PASSWORD: cinema-local
+    S3_ENDPOINT: http://s3:8333
+    S3_ACCESS_KEY: cinema-s3
+    S3_SECRET_KEY: cinema-s3-local
   healthcheck:
-    test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
-    interval: 5s
-    timeout: 3s
-    retries: 12
-
-x-sentinel: &sentinel
-  image: redis:7.4-alpine
+    test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=8)"]
+    interval: 15s
+    timeout: 10s
+    retries: 8
+    start_period: 30s
+x-kafka: &kafka
+  image: confluentinc/cp-kafka:7.8.3
   restart: unless-stopped
-  command: [sh, /etc/redis/sentinel.sh]
-  depends_on:
-    redis-master: {condition: service_healthy}
-    redis-replica: {condition: service_healthy}
+  environment: &kafka-env
+    CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    KAFKA_PROCESS_ROLES: broker,controller
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093
+    KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+    KAFKA_MIN_INSYNC_REPLICAS: 2
+    KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'false'
+    KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    KAFKA_HEAP_OPTS: -Xms256m -Xmx512m
+    KAFKA_LOG_DIRS: /var/lib/kafka/data
   healthcheck:
-    test: [CMD, redis-cli, -p, '26379', ping]
-    interval: 5s
-    timeout: 3s
+    test: [CMD-SHELL, 'kafka-broker-api-versions --bootstrap-server localhost:9092 >/dev/null 2>&1']
+    interval: 20s
+    timeout: 15s
     retries: 12
-
+    start_period: 60s
 services:
-  booking-db:
-    <<: *postgres
+  kafka-1:
+    <<: *kafka
+    hostname: kafka-1
     environment:
-      POSTGRES_DB: bookings
-      POSTGRES_USER: booking
-      POSTGRES_PASSWORD: ${BOOKING_DB_PASSWORD:-booking-local}
-    volumes: [booking-data:/var/lib/postgresql/data]
-
-  flight-db:
-    <<: *postgres
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-1:9092
+    volumes: [kafka-1:/var/lib/kafka/data]
+  kafka-2:
+    <<: *kafka
+    hostname: kafka-2
     environment:
-      POSTGRES_DB: flights
-      POSTGRES_USER: flight
-      POSTGRES_PASSWORD: ${FLIGHT_DB_PASSWORD:-flight-local}
-    volumes: [flight-data:/var/lib/postgresql/data]
-
-  redis-master:
-    image: redis:7.4-alpine
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-2:9092
+    volumes: [kafka-2:/var/lib/kafka/data]
+  kafka-3:
+    <<: *kafka
+    hostname: kafka-3
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka-3:9092
+    volumes: [kafka-3:/var/lib/kafka/data]
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.8.3
     restart: unless-stopped
-    command: [redis-server, --appendonly, 'yes', --protected-mode, 'no']
-    volumes: [redis-master-data:/data]
-    healthcheck:
-      test: [CMD, redis-cli, ping]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  redis-replica:
-    image: redis:7.4-alpine
-    restart: unless-stopped
-    command: [redis-server, --replicaof, redis-master, '6379', --appendonly, 'yes', --protected-mode, 'no']
     depends_on:
-      redis-master: {condition: service_healthy}
-    volumes: [redis-replica-data:/data]
-    healthcheck:
-      test: [CMD, redis-cli, ping]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-
-  sentinel-1:
-    <<: *sentinel
-    environment: {SENTINEL_HOST: sentinel-1}
-    volumes:
-      - ./deploy/sentinel.sh:/etc/redis/sentinel.sh:ro
-      - sentinel-1-data:/data
-  sentinel-2:
-    <<: *sentinel
-    environment: {SENTINEL_HOST: sentinel-2}
-    volumes:
-      - ./deploy/sentinel.sh:/etc/redis/sentinel.sh:ro
-      - sentinel-2-data:/data
-  sentinel-3:
-    <<: *sentinel
-    environment: {SENTINEL_HOST: sentinel-3}
-    volumes:
-      - ./deploy/sentinel.sh:/etc/redis/sentinel.sh:ro
-      - sentinel-3-data:/data
-
-  flight-service:
-    build: {context: ., target: base}
-    restart: unless-stopped
-    command: [python, -m, app.flight.main]
+      kafka-1: {condition: service_healthy}
+      kafka-2: {condition: service_healthy}
+      kafka-3: {condition: service_healthy}
     environment:
-      <<: *grpc-environment
-      DATABASE_URL: postgresql://flight:${FLIGHT_DB_PASSWORD:-flight-local}@flight-db:5432/flights
-      REDIS_SENTINELS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
-      REDIS_MASTER_NAME: flights
-      CACHE_TTL_SECONDS: ${CACHE_TTL_SECONDS:-300}
-    depends_on:
-      flight-db: {condition: service_healthy}
-      sentinel-1: {condition: service_healthy}
-      sentinel-2: {condition: service_healthy}
-      sentinel-3: {condition: service_healthy}
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka-1:9092,kafka-2:9092,kafka-3:9092
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC_REPLICATION_FACTOR: 3
+      SCHEMA_REGISTRY_HEAP_OPTS: -Xms128m -Xmx256m
+    ports: ["127.0.0.1:18085:8081"]
     healthcheck:
-      test: [CMD, python, -m, scripts.flight_health]
+      test: [CMD, curl, -fsS, http://localhost:8081/subjects]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.3.6.56-alpine
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: cinema
+      CLICKHOUSE_PASSWORD: cinema-local
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+      - ./deploy/clickhouse/config.xml:/etc/clickhouse-server/config.d/cinema.xml:ro
+    ports: ["127.0.0.1:${CLICKHOUSE_PORT:-18123}:8123"]
+    ulimits:
+      nofile: {soft: 262144, hard: 262144}
+    healthcheck:
+      test: [CMD, clickhouse-client, --user, cinema, --password, cinema-local, --query, SELECT 1]
       interval: 10s
-      timeout: 4s
-      start_period: 10s
-      retries: 6
-
-  booking-service:
-    build: {context: ., target: base}
+      timeout: 5s
+      retries: 12
+  postgres:
+    image: postgres:17-alpine
     restart: unless-stopped
-    ports: ['${HOST_PORT:-8080}:8080']
     environment:
-      <<: *grpc-environment
-      DATABASE_URL: postgresql://booking:${BOOKING_DB_PASSWORD:-booking-local}@booking-db:5432/bookings
-      FLIGHT_GRPC_TARGET: flight-service:50051
-      GRPC_MAX_ATTEMPTS: ${GRPC_MAX_ATTEMPTS:-3}
-      GRPC_TIMEOUT_SECONDS: ${GRPC_TIMEOUT_SECONDS:-2}
-      GRPC_RETRY_BACKOFF_SECONDS: ${GRPC_RETRY_BACKOFF_SECONDS:-0.1}
-      CB_FAILURE_THRESHOLD: ${CB_FAILURE_THRESHOLD:-5}
-      CB_RESET_TIMEOUT_SECONDS: ${CB_RESET_TIMEOUT_SECONDS:-15}
-      CB_WINDOW_SECONDS: ${CB_WINDOW_SECONDS:-30}
-      RECOVERY_STALE_SECONDS: ${RECOVERY_STALE_SECONDS:-60}
-      RECOVERY_INTERVAL_SECONDS: ${RECOVERY_INTERVAL_SECONDS:-5}
-    depends_on:
-      booking-db: {condition: service_healthy}
-      flight-service: {condition: service_healthy}
+      POSTGRES_USER: cinema
+      POSTGRES_PASSWORD: cinema-local
+      POSTGRES_DB: cinema
+    volumes: [postgres:/var/lib/postgresql/data]
+    ports: ["127.0.0.1:${POSTGRES_PORT:-15434}:5432"]
     healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/ready', timeout=2)"]
+      test: [CMD-SHELL, pg_isready -U cinema -d cinema]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+  s3:
+    image: chrislusf/seaweedfs:3.85
+    command: [server, -s3, -dir=/data, -ip=s3, -ip.bind=0.0.0.0, -volume.max=5, -master.volumeSizeLimitMB=1024, -s3.config=/etc/seaweedfs/credentials.json]
+    restart: unless-stopped
+    volumes:
+      - s3:/data
+      - ./deploy/s3/credentials.json:/etc/seaweedfs/credentials.json:ro
+    ports:
+      - 127.0.0.1:${S3_PORT:-19000}:8333
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "wget -q -O /dev/null http://localhost:9333/cluster/status && wget -S -O /dev/null http://localhost:8333/ 2>&1 | grep -q '403 Forbidden'"
       interval: 10s
-      timeout: 4s
-      start_period: 10s
-      retries: 6
-
+      timeout: 5s
+      retries: 12
+  bootstrap:
+    <<: *app
+    restart: on-failure
+    command: [python, -m, app.bootstrap]
+    depends_on:
+      schema-registry: {condition: service_healthy}
+      clickhouse: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      s3: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "import os; os.kill(1,0)"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  movie-service:
+    <<: *app
+    environment:
+      <<: *app-env
+      GENERATOR_ENABLED: ${GENERATOR_ENABLED:-true}
+      DEMO_SEED_ENABLED: ${DEMO_SEED_ENABLED:-true}
+      GENERATOR_INTERVAL_SECONDS: ${GENERATOR_INTERVAL_SECONDS:-3}
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+    ports: ["127.0.0.1:${MOVIE_PORT:-18180}:8000"]
+  aggregation-service:
+    <<: *app
+    command: [uvicorn, app.analytics.main:app, --host, 0.0.0.0, --port, '8000']
+    environment:
+      <<: *app-env
+      AGGREGATION_INTERVAL_SECONDS: ${AGGREGATION_INTERVAL_SECONDS:-60}
+      AGGREGATION_LOOKBACK_DAYS: ${AGGREGATION_LOOKBACK_DAYS:-9}
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+    ports: ["127.0.0.1:${ANALYTICS_PORT:-18181}:8000"]
+  grafana:
+    image: cinema-analytics-grafana:local
+    build: {context: deploy/grafana}
+    restart: unless-stopped
+    depends_on:
+      bootstrap: {condition: service_completed_successfully}
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: cinema-grafana-local
+      GF_USERS_ALLOW_SIGN_UP: 'false'
+      GF_ANALYTICS_REPORTING_ENABLED: 'false'
+    volumes:
+      - grafana:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:${GRAFANA_PORT:-13000}:3000"]
+    healthcheck:
+      test: [CMD, wget, -q, -O, /dev/null, http://localhost:3000/api/health]
+      interval: 15s
+      timeout: 5s
+      retries: 15
   tests:
-    profiles: [test]
+    <<: *app
+    image: cinema-analytics-tests:local
     build: {context: ., target: test}
+    profiles: [test]
+    restart: 'no'
     environment:
-      <<: *grpc-environment
-      TEST_API_URL: http://booking-service:8080
-      TEST_FLIGHT_TARGET: flight-service:50051
-      TEST_FLIGHT_DATABASE_URL: postgresql://flight:${FLIGHT_DB_PASSWORD:-flight-local}@flight-db:5432/flights
-      TEST_BOOKING_DATABASE_URL: postgresql://booking:${BOOKING_DB_PASSWORD:-booking-local}@booking-db:5432/bookings
-      REDIS_SENTINELS: sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+      <<: *app-env
+      RUN_INTEGRATION: '1'
+      MOVIE_URL: http://movie-service:8000
+      ANALYTICS_URL: http://aggregation-service:8000
+      GRAFANA_URL: http://grafana:3000
     depends_on:
-      booking-service: {condition: service_healthy}
-
+      movie-service: {condition: service_healthy}
+      aggregation-service: {condition: service_healthy}
+      grafana: {condition: service_healthy}
+    healthcheck: {disable: true}
 volumes:
-  booking-data:
-  flight-data:
-  redis-master-data:
-  redis-replica-data:
-  sentinel-1-data:
-  sentinel-2-data:
-  sentinel-3-data:
+  kafka-1:
+  kafka-2:
+  kafka-3:
+  clickhouse:
+  postgres:
+  s3:
+  grafana:

@@ -1,142 +1,58 @@
-# Схема данных и протокол согласования
-
-## ER-диаграмма (Mermaid)
-
-Две базы, без внешних ключей между сервисами. `Booking.flight_id` и
-`SeatReservation.booking_id` — ссылки по контракту gRPC.
+# Архитектура и точки отказа
 
 ```mermaid
-erDiagram
-    FLIGHTS ||--o{ SEAT_RESERVATIONS : has
-    FLIGHTS {
-        uuid id PK
-        text flight_number "UNIQUE with UTC departure day"
-        text airline
-        char3 origin "IATA"
-        char3 destination "IATA, differs from origin"
-        timestamptz departure_at
-        timestamptz arrival_at "greater than departure_at"
-        int total_seats "greater than 0"
-        int available_seats "0..total_seats"
-        bigint price_minor "positive kopecks RUB"
-        flight_status status
-    }
-    SEAT_RESERVATIONS {
-        uuid id PK
-        uuid booking_id UK
-        uuid flight_id FK
-        int seat_count "1..1000"
-        reservation_status status "ACTIVE / RELEASED / EXPIRED"
-        timestamptz created_at
-    }
-    RELEASED_BOOKINGS {
-        uuid booking_id PK
-        timestamptz created_at
-    }
-    CACHE_REVISION {
-        int id PK "singleton 1"
-        bigint revision
-    }
-    BOOKINGS ||--o| CANCELLATION_JOBS : pending_cancel
-    BOOKINGS {
-        uuid id PK
-        text user_id "1..128 chars"
-        uuid flight_id "external reference"
-        text passenger_name
-        text passenger_email
-        int seat_count "1..1000"
-        bigint total_price_minor "immutable positive snapshot"
-        booking_status status "CONFIRMED / CANCELLED"
-        timestamptz created_at
-    }
-    BOOKING_ATTEMPTS {
-        uuid id PK "future booking ID"
-        text fingerprint "SHA256 canonical request"
-        text state "PROCESSING / SUCCEEDED / COMPENSATING / COMPENSATED"
-        timestamptz created_at
-    }
-    CANCELLATION_JOBS {
-        uuid booking_id PK,FK
-        timestamptz created_at
-    }
-```
-
-`flights`, `seat_reservations`, `released_bookings`, `cache_revision` принадлежат
-Flight PostgreSQL. Остальные таблицы — Booking PostgreSQL. Ограничения реализованы
-в SQL, а не только в валидации HTTP/gRPC.
-
-Все бизнес-атрибуты зависят от ключа своей сущности; повторяющихся групп и
-транзитивных зависимостей между неключевыми бизнес-атрибутами нет. Данные пассажира
-относятся к конкретному бронированию, отдельной сущности «профиль пользователя»
-нет. Стоимость бронирования — исторический факт, не ссылка на изменяемую цену рейса.
-Дата вылета не хранится отдельным атрибутом: уникальный expression index по
-`flight_number` и `(departure_at AT TIME ZONE 'UTC')::date` обеспечивает
-уникальность номера рейса в пределах дня без избыточного поля. Доступный остаток — транзакционно поддерживаемый
-счётчик; его границы защищены CHECK и блокировкой рейса.
-
-## Создание и компенсация
-
-```mermaid
-sequenceDiagram
-    participant C as REST client
-    participant B as Booking
-    participant BD as Booking PostgreSQL
-    participant F as Flight gRPC
-    participant FD as Flight PostgreSQL
-    C->>B: POST /bookings + optional Idempotency-Key
-    B->>F: GetFlight (price snapshot)
-    F-->>B: Flight
-    B->>BD: COMMIT durable attempt PROCESSING
-    B->>BD: BEGIN, lock attempt
-    B->>F: ReserveSeats(booking_id, flight_id, count)
-    F->>FD: BEGIN, lock booking key, SELECT flight FOR UPDATE
-    F->>FD: decrement seats + INSERT reservation + bump cache revision
-    F->>FD: COMMIT
-    F-->>B: ACTIVE
-    alt Booking INSERT succeeds
-        B->>BD: INSERT booking CONFIRMED, attempt SUCCEEDED, COMMIT
-        B-->>C: 201 Booking
-    else RPC or local write fails
-        B->>BD: ROLLBACK, persist compensation intent
-        B->>F: ReleaseReservation(booking_id)
-        F->>FD: transaction: tombstone + return seats + RELEASED + cache revision
-        B->>BD: attempt COMPENSATED
-        B-->>C: error, no booking
+flowchart LR
+    HTTP[HTTP clients] --> Movie[Movie Service / FastAPI]
+    Generator[Historical + live generator] --> Movie
+    Movie -->|user_id key · Avro · acks=all| Kafka
+    subgraph Kafka[Kafka KRaft cluster]
+        B1[broker/controller 1]
+        B2[broker/controller 2]
+        B3[broker/controller 3]
     end
+    Registry[Schema Registry · Avro v1/v2] -.schema ID.-> Movie
+    Registry -.writer schema.-> Engine
+    Kafka -->|3 partitions · RF=3 · minISR=2| Engine[ClickHouse Kafka Engine]
+    Engine --> MV[Materialized Views]
+    MV --> Raw[raw_events / MergeTree]
+    MV --> DLQ[ingestion_errors / MergeTree]
+    Raw --> Unique[events · dedup by event_id]
+    Unique -->|SQL · consistent ingestion cutoff| Agg[Aggregation Service]
+    Schedule[Configurable scheduler / manual HTTP] --> Agg
+    Agg --> Snapshots[CH snapshots + commit marker]
+    Snapshots --> Latest[daily_metrics view]
+    Latest --> Grafana[Grafana · cohort heatmap + 5 panels]
+    Agg -->|transaction · replace date| PG[(PostgreSQL metrics + export_jobs)]
+    PG --> Export[Exporter in Aggregation Service]
+    Export -->|PUT same daily key| S3[(SeaweedFS S3)]
 ```
 
-При недоступности Flight компенсация остаётся в БД и повторяется recovery worker.
-При падении Booking до сохранения COMPENSATING worker находит старый PROCESSING.
-Блокировка intent исключает конкуренцию worker с активным созданием. При
-неопределённом результате COMMIT проверяется SUCCEEDED, поэтому успешная покупка
-не компенсируется.
+Schema Registry хранит версии Avro в реплицированном `_schemas`. Bootstrap
+регистрирует v1/v2 с FULL_TRANSITIVE, создаёт topic, применяет migrations и
+создаёт bucket. Все приложения зависят от успешного завершения bootstrap,
+сам bootstrap зависит от health checks инфраструктуры.
 
-## Отмена
+Три combined Kafka узла обеспечивают majority controllers и RF=3. Это отдельные
+процессы/volumes на одном хосте: проверяется остановка контейнера, а не потеря
+всего Docker-хоста. Kafka offsets хранятся реплицированно. CH consumers имеют
+постоянное имя consumer group, поэтому догоняют поток после перезапуска.
 
-```mermaid
-sequenceDiagram
-    participant C as Client
-    participant B as Booking
-    participant D as Booking PostgreSQL
-    participant F as Flight
-    C->>B: POST /bookings/id/cancel
-    B->>D: lock booking, COMMIT cancellation job
-    B->>D: BEGIN, lock booking
-    B->>F: ReleaseReservation(id)
-    F-->>B: RELEASED (idempotent)
-    B->>D: UPDATE CANCELLED + DELETE job, COMMIT
-    B-->>C: CANCELLED
-    Note over B,D: Recovery repeats unfinished jobs after crashes
-```
+ClickHouse raw хранит доставленные записи append-only, а dedup view устраняет
+повторный event_id до всех метрик. Разделение raw/aggregates позволяет проверить
+событие целиком, пересчитать историю и не нагружать raw интерактивными запросами
+дашборда. Метрики материализованы в CH таблицах, latest view лишь выбирает run.
 
-## Пределы модели
+PostgreSQL — источник готовых данных для экспорта. Транзакция замены одной даты
+меняет все dimensions, aggregation run и export queue атомарно. Advisory lock
+между всеми экземплярами сервиса не допускает конкурирующих публикаций/выгрузок.
+CH и PG — разные транзакционные границы: при сбое между ними retry приводит
+снимки к согласованному состоянию; временное различие допустимо и описано явно.
 
-Синхронной распределённой транзакции нет. Во время отказа возможна временная
-резервация без подтверждённого Booking; восстановление возвращает эти места.
-Гарантия итоговой согласованности требует сохранности PostgreSQL и последующего
-восстановления доступности сервисов. Резервации подтверждённых бронирований не
-истекают автоматически; EXPIRED предусмотрен enum контракта, отдельная политика
-временных удержаний заданием не требуется.
+Exporter использует отдельную долговечную очередь в PG, с попытками и last_error.
+S3 ошибка не откатывает бизнес-метрики, не завершает процесс и не блокирует
+health агрегатора. После восстановления pending job автоматически выполняется.
+PUT детерминированного ключа обеспечивает повторяемость без дублирования объектов.
 
-После смены статуса рейса существующие бронирования сохраняются. UpdateFlight
-не запускает массовые возвраты: эта бизнес-операция не входит в заданный API.
+`tests/test_pipeline.py` проверяет реальные API/хранилища, а
+`scripts/fault_checks.py` останавливает один Kafka узел, CH, S3 и PG, проверяет
+поведение и возвращает каждый компонент в `finally`.

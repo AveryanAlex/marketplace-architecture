@@ -1,0 +1,7 @@
+<clickhouse>
+  <logger><level>warning</level><console>true</console></logger>
+  <max_server_memory_usage_to_ram_ratio>0.4</max_server_memory_usage_to_ram_ratio>
+  <background_schedule_pool_size>16</background_schedule_pool_size>
+  <background_message_broker_schedule_pool_size>8</background_message_broker_schedule_pool_size>
+  <kafka><auto_offset_reset>earliest</auto_offset_reset></kafka>
+</clickhouse>

@@ -1,24 +1,22 @@
+FROM ghcr.io/astral-sh/uv:0.9.11 AS uv
 FROM python:3.13-slim AS base
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+COPY --from=uv /uv /usr/local/bin/uv
 WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-COPY proto ./proto
-COPY scripts/generate_proto.py ./scripts/generate_proto.py
-COPY app ./app
-RUN python scripts/generate_proto.py
-COPY migrations ./migrations
-COPY scripts/flight_health.py ./scripts/flight_health.py
-RUN useradd --system --uid 10001 booking && chown -R booking:booking /app
-USER booking
-EXPOSE 8080 50051
-CMD ["uvicorn", "app.booking.main:app", "--host", "0.0.0.0", "--port", "8080"]
-
+ENV PYTHONUNBUFFERED=1 PATH=/app/.venv/bin:$PATH UV_COMPILE_BYTECODE=1
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev
+COPY app app
+COPY schemas schemas
+COPY migrations migrations
+RUN useradd --uid 10001 --create-home cinema
+USER cinema
+CMD ["uvicorn", "app.producer.main:app", "--host", "0.0.0.0", "--port", "8000"]
 FROM base AS test
 USER root
-COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
-COPY pyproject.toml .
-COPY tests ./tests
-USER booking
-CMD ["python", "-m", "pytest", "-v", "-p", "no:cacheprovider"]
+RUN uv sync --frozen
+COPY tests tests
+COPY deploy/grafana/dashboards deploy/grafana/dashboards
+USER cinema
+ENV RUFF_CACHE_DIR=/tmp/ruff-cache
+CMD ["pytest", "-p", "no:cacheprovider", "-v"]
+FROM base AS runtime
